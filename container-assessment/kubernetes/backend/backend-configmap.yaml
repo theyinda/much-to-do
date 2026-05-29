@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-configmap
+  namespace: muchtodo
+data:
+  port: "8080"
+  db-name: much_todo_db
+  log-level: DEBUG
+  log-format: json
+  jwt-expiration-hours: "72"

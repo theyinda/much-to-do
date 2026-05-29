@@ -3,12 +3,7 @@ name: Frontend CI/CD
 on:
   push:
     branches: [feature/full-stack, main]
-    paths:
-      - 'Client/**'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'Client/**'
+  workflow_dispatch:
 
 env:
   AWS_REGION: us-east-1

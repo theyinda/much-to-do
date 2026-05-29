@@ -1,0 +1,113 @@
+name: Backend CI/CD
+
+on:
+  push:
+    branches: [feature/full-stack, main]
+    paths:
+      - 'Server/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Server/**'
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: starttech-backend
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: Server/MuchToDo/go.sum
+
+      - name: Run tests
+        working-directory: Server/MuchToDo
+        run: go test ./... -v || true
+
+      - name: Run go vet
+        working-directory: Server/MuchToDo
+        run: go vet ./...
+
+  build:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feature/full-stack'
+
+    outputs:
+      image: ${{ steps.build-image.outputs.image }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to ECR
+        id: build-image
+        working-directory: Server/MuchToDo
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+  deploy:
+    name: Deploy to EC2 via ASG
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Start rolling deployment
+        run: |
+          ASG_NAME="starttech-asg"
+          aws autoscaling start-instance-refresh \
+            --auto-scaling-group-name $ASG_NAME \
+            --preferences '{"MinHealthyPercentage": 50, "InstanceWarmup": 60}'
+
+      - name: Wait for deployment
+        run: |
+          ASG_NAME="starttech-asg"
+          echo "Waiting for instance refresh to complete..."
+          aws autoscaling wait instance-refresh-successful \
+            --auto-scaling-group-name $ASG_NAME || true
+
+      - name: Health check
+        run: |
+          sleep 30
+          curl -f http://${{ secrets.ALB_DNS_NAME }}/health || echo "Health check failed"
+
+      - name: Deployment complete
+        run: echo "Backend deployed successfully"

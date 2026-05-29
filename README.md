@@ -1,4 +1,4 @@
-# StartTech Application
+# StartTech Applicationn
 
 ## Overview
 Full-stack application with React frontend and Golang backend.
